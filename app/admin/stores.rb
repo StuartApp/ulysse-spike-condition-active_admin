@@ -1,42 +1,42 @@
-module ConditionalFilter
-  def filter(attribute, options = {})
-    dep = options.delete(:if)
-    if dep
-      controller do
-        before_action only: :index do
-          q = params["q"]
-          if q && q["by_zone"].present? && q.keys.none? { |key| key.start_with?(dep.to_s) }
-            raise "nop"
-          end
-        end
+module ActiveAdminTimeout
+  def self.add_timeout(dsl)
+    dsl.controller do
+      around_action :do_timeout
+
+      def do_timeout
+        connection = ActiveRecord::Base.connection
+        connection.execute("set max_execution_time = 2000")
+        yield
+      rescue ActiveRecord::StatementInvalid => e
+        # query timed out
+        raise "some error"
+      ensure
+        # reset to original max_execution_time
+        connection.execute("set max_execution_time = #{ENV.fetch("DEFAULT_TIMEOUT", 30_000).to_i}")
       end
     end
-    super
   end
 end
 
 ActiveAdmin.register Store do
-  extend ConditionalFilter
+  ActiveAdminTimeout.add_timeout(self)
+
+  # decorate_with FlowerDecorator
   menu
   # Create sections on the index screen
   scope :all, default: true
   # scope :available
   # scope :drafts
 
-  p method(:filter).source_location * ?:
+  index do
+    column :flowers
+    column :boom do |x|
+      link_to("wait for it", "/admin/stores/#{x.id}/long_query")
+    end
+    actions
+  end
 
-  # controller do
-  #   before_action only: :index do
-  #     p params
-  #     if params.dig("q", "by_zone").present? && params.dig("q", "category_eq").nil?
-  #       raise "nop"
-  #     end
-  #   end
-  # end
-
-  # Filterable attributes on the index screen
-  filter :name
-  filter :category, as: :select, collection: %w(food tech)
-  filter :by_zone, as: :string, if: :category
-  filter :created_at
+  member_action :long_query do
+    Store.connection.execute("SELECT 1 FROM information_schema.tables WHERE sleep(6);")
+  end
 end
